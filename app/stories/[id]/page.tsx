@@ -19,6 +19,8 @@ export default function StoryPage() {
   const [timeLeft, setTimeLeft] = useState(0);
   const [contribution, setContribution] = useState('');
   const [isParticipant, setIsParticipant] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -39,7 +41,7 @@ export default function StoryPage() {
         .from('story_contributions')
         .select('*, users(username)')
         .eq('story_id', id)
-        .order('turn_number', { ascending: true });
+        .order('created_at', { ascending: true });
 
       if (contributionsData) {
         setContributions(contributionsData);
@@ -53,7 +55,12 @@ export default function StoryPage() {
 
       if (participantsData) {
         setParticipants(participantsData);
-        setIsParticipant(participantsData.some(p => p.users?.wallet_address === address));
+        if (address) {
+          const isCurrentParticipant = participantsData.some(
+            (p) => p.users?.wallet_address === address
+          );
+          setIsParticipant(isCurrentParticipant);
+        }
       }
     };
 
@@ -83,9 +90,25 @@ export default function StoryPage() {
       return;
     }
 
+    if (isJoining) return;
+    setIsJoining(true);
+
     try {
       const user = await createOrGetUser(address);
       
+      const { data: existingParticipant } = await supabase
+        .from('story_participants')
+        .select('id')
+        .eq('story_id', id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (existingParticipant) {
+        setIsParticipant(true);
+        toast.info('You are already a participant in this story');
+        return;
+      }
+
       const { error } = await supabase
         .from('story_participants')
         .insert({
@@ -97,14 +120,25 @@ export default function StoryPage() {
 
       setIsParticipant(true);
       toast.success('Successfully joined the story!');
+      
+      const { data: participantsData } = await supabase
+        .from('story_participants')
+        .select('*, users(username)')
+        .eq('story_id', id);
+      if (participantsData) {
+        setParticipants(participantsData);
+      }
     } catch (error: any) {
-      toast.error(error.message || 'Failed to join story');
+      toast.error(error.message + ' Failed to join story');
+    } finally {
+      setIsJoining(false);
     }
   };
 
   const handleSubmitContribution = async () => {
-    if (!address || !contribution.trim()) return;
+    if (!address || !contribution.trim() || isSubmitting) return;
 
+    setIsSubmitting(true);
     try {
       const user = await createOrGetUser(address);
 
@@ -122,7 +156,9 @@ export default function StoryPage() {
       setContribution('');
       toast.success('Contribution added!');
     } catch (error: any) {
-      toast.error(error.message || 'Failed to add contribution');
+      toast.error(error.message + ' Failed to add contribution');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -156,9 +192,9 @@ export default function StoryPage() {
             <Button 
               onClick={handleJoinStory}
               className="w-full"
-              disabled={!address}
+              disabled={!address || isJoining}
             >
-              Join Story
+              {isJoining ? 'Joining...' : 'Join Story'}
             </Button>
           ) : (
             <div className="space-y-4">
@@ -171,9 +207,9 @@ export default function StoryPage() {
               <Button
                 onClick={handleSubmitContribution}
                 className="w-full"
-                disabled={!address || !contribution.trim()}
+                disabled={!address || !contribution.trim() || isSubmitting}
               >
-                Submit Contribution
+                {isSubmitting ? 'Submitting...' : 'Submit Contribution'}
               </Button>
             </div>
           )}
@@ -191,7 +227,6 @@ export default function StoryPage() {
               ))}
             </div>
           </div>
-
           <div className="bg-card rounded-lg p-6">
             <h3 className="text-lg font-semibold mb-4">Story Info</h3>
             <div className="space-y-2 text-sm text-muted-foreground">

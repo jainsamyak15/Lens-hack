@@ -93,7 +93,6 @@ export function LandingPage() {
           </motion.div>
         </div>
       </main>
-
       <footer className="border-t">
         <div className="container flex h-14 items-center justify-between">
           <p className="text-sm text-muted-foreground">
