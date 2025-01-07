@@ -4,12 +4,12 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { supabase } from '@/utils/supabase';
+import { supabase, createOrGetUser } from '@/utils/supabase';
 import { useAccount } from 'wagmi';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 
-export default function StoryRoom() {
+export default function StoryPage() {
   const { id } = useParams();
   const { address } = useAccount();
   const [story, setStory] = useState<any>(null);
@@ -18,6 +18,7 @@ export default function StoryRoom() {
   const [currentTurn, setCurrentTurn] = useState(0);
   const [timeLeft, setTimeLeft] = useState(0);
   const [contribution, setContribution] = useState('');
+  const [isParticipant, setIsParticipant] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -52,12 +53,12 @@ export default function StoryRoom() {
 
       if (participantsData) {
         setParticipants(participantsData);
+        setIsParticipant(participantsData.some(p => p.users?.wallet_address === address));
       }
     };
 
     fetchStoryData();
 
-    // Set up real-time subscriptions
     const contributionsSubscription = supabase
       .channel('contributions')
       .on('postgres_changes', {
@@ -74,37 +75,44 @@ export default function StoryRoom() {
     return () => {
       contributionsSubscription.unsubscribe();
     };
-  }, [id]);
+  }, [id, address]);
 
-  useEffect(() => {
-    if (timeLeft > 0) {
-      const timer = setInterval(() => {
-        setTimeLeft(current => current - 1);
-      }, 1000);
-      return () => clearInterval(timer);
+  const handleJoinStory = async () => {
+    if (!address) {
+      toast.error('Please connect your wallet first');
+      return;
     }
-  }, [timeLeft]);
+
+    try {
+      const user = await createOrGetUser(address);
+      
+      const { error } = await supabase
+        .from('story_participants')
+        .insert({
+          story_id: id,
+          user_id: user.id
+        });
+
+      if (error) throw error;
+
+      setIsParticipant(true);
+      toast.success('Successfully joined the story!');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to join story');
+    }
+  };
 
   const handleSubmitContribution = async () => {
     if (!address || !contribution.trim()) return;
 
     try {
-      const { data: userData } = await supabase
-        .from('users')
-        .select('id')
-        .eq('wallet_address', address)
-        .single();
-
-      if (!userData) {
-        toast.error('User not found');
-        return;
-      }
+      const user = await createOrGetUser(address);
 
       const { error } = await supabase
         .from('story_contributions')
         .insert({
           story_id: id,
-          user_id: userData.id,
+          user_id: user.id,
           content: contribution.trim(),
           turn_number: currentTurn
         });
@@ -113,9 +121,8 @@ export default function StoryRoom() {
 
       setContribution('');
       toast.success('Contribution added!');
-    } catch (error) {
-      toast.error('Failed to add contribution');
-      console.error(error);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to add contribution');
     }
   };
 
@@ -145,21 +152,31 @@ export default function StoryRoom() {
             ))}
           </div>
 
-          <div className="space-y-4">
-            <Textarea
-              value={contribution}
-              onChange={(e) => setContribution(e.target.value)}
-              placeholder="Add to the story..."
-              className="min-h-[100px]"
-            />
-            <Button
-              onClick={handleSubmitContribution}
+          {!isParticipant ? (
+            <Button 
+              onClick={handleJoinStory}
               className="w-full"
-              disabled={timeLeft === 0}
+              disabled={!address}
             >
-              Submit ({timeLeft}s)
+              Join Story
             </Button>
-          </div>
+          ) : (
+            <div className="space-y-4">
+              <Textarea
+                value={contribution}
+                onChange={(e) => setContribution(e.target.value)}
+                placeholder="Add to the story..."
+                className="min-h-[100px]"
+              />
+              <Button
+                onClick={handleSubmitContribution}
+                className="w-full"
+                disabled={!address || !contribution.trim()}
+              >
+                Submit Contribution
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
@@ -178,8 +195,7 @@ export default function StoryRoom() {
           <div className="bg-card rounded-lg p-6">
             <h3 className="text-lg font-semibold mb-4">Story Info</h3>
             <div className="space-y-2 text-sm text-muted-foreground">
-              <p>Turn Duration: {story.turn_duration_seconds}s</p>
-              <p>Max Participants: {story.max_participants}</p>
+              <p>Participants: {participants.length}/{story.max_participants}</p>
               <p>Status: {story.status}</p>
             </div>
           </div>
